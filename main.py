@@ -11,8 +11,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-
+from torch.utils.data import DataLoader, TensorDataset
 from backend.api import API
 from backend.transformer import Transformer
 from resources.api_keys import crypto_dotcom_key, crypto_dotcom_secret
@@ -28,16 +27,42 @@ from resources.api_keys import crypto_dotcom_key, crypto_dotcom_secret
 """
 
 class Agent():
-    def __init__(self, crypto_dotcom_key, crypto_dotcom_secret, num_coins):
+    def __init__(self, crypto_dotcom_key, crypto_dotcom_secret):
 
         self.maker_fee = 0.075
         self.taker_fee = 0.075
         self.error_count = 0
         self.api = API(crypto_dotcom_key, crypto_dotcom_secret, shutdown_callback=self.shutdown)
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.transformer = Transformer(num_coins).to(self.device)
+        self.device = 'cuda'
+
+        if not torch.cuda.is_available(): 
+            self.device = 'cpu'
+            print("no gpu available")
+            exit()
+
+        torch.cuda.empty_cache()
+        self.transformer = Transformer().to(self.device)
+        random_input_tensor = torch.rand(1, 1, 20480)
+        random_output_tensor = torch.rand(1, 1, 3)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.transformer.parameters(), lr=0.001)
+        inputs = random_input_tensor.to(self.device)
+        labels = random_output_tensor.to(self.device)
+        output = self.transformer(inputs)
+        loss = criterion(output, labels)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        peak_memory = torch.cuda.max_memory_allocated(self.device)
+        torch.cuda.reset_peak_memory_stats(self.device)
+        torch.cuda.empty_cache() 
+    
         self.sigmoid = nn.Sigmoid()
         self.data_log = json.load(open("resources\data_log.json"))
+
+        self.coin_num = len(self.data_log['coins'])
+        
+        self.batch_size = int(int(15 / (peak_memory / 1024**3)) / self.coin_num)
 
     def update_data_log_file(self):
         with open("resources\data_log.json", "w") as file:
@@ -63,12 +88,12 @@ class Agent():
             
             self.train_with_latest_data()
 
+    def shutdown(self):
+        exit()
+
     def list_coins(self):
         for coin in self.data_log["coins"]:
             print(coin["coin"])
-
-    def shutdown(self):
-        exit()
 
     def add_coin(self, coin_name):
 
@@ -126,7 +151,7 @@ class Agent():
 
             while (end_time <= time_now):
                 
-                candlesticks = self.api.get_candlestick(f"{coin['coin']}_USD", "1m", start_time, end_time) # IMPORTANT: MIGHT NOT BE USD. WILL NEED TO VERIFY IN THE FUTURE
+                candlesticks = self.api.get_candlestick(f"{coin['coin']}_USD", "1m", start_time, end_time) 
     
                 """
                 Add prices to csv here
@@ -136,9 +161,9 @@ class Agent():
 
                 start_time += 18000000
                 end_time += 18000000
-
+            
             # Deleting data that is more than 2 years old
-            coin["prices"] = coin["prices"][len(coin["prices"]) - 1036800:]
+            coin["prices"] = coin["prices"][len(coin["prices"]) - 1036800:] # <-- BUG? Why does this number does not add up to 365daysx2
 
             # Update "last_price_time"
             coin["last_price_time"] = time_now
@@ -238,7 +263,7 @@ class Agent():
                 end_index = 1036798 - minutes_passed
                 start_index = end_index - 20480
 
-            while (end_index <= 1036798): # 1036798 is the number of prices in the log
+            while (end_index <= 1036798): # 1036798 is the number of prices in the log # BUG is it tho?
 
                 training_inputs = []
                 training_outputs = []
@@ -247,7 +272,7 @@ class Agent():
                     
                     training_inputs.append(new_prices_dict[coin["coin"]][start_index:end_index]) # appends price changes to training inputs shape = []
 
-                    if (coin["training_data"][end_index] == "B"):
+                    if (coin["training_data"][end_index] == "B"):  # BUG end_index could become out of range
                         training_outputs.append([1., 0., 0.])
                     elif (coin["training_data"][end_index] == "S"):
                         training_outputs.append([0., 1., 0.])
@@ -258,13 +283,11 @@ class Agent():
                 input = torch.tensor(training_inputs).unsqueeze(1)#.to(self.device)
                 label = torch.tensor(training_outputs)#.to(self.device)
 
-                print(input.shape)
-                print(label.shape)
-
                 output = self.transformer(input)
                 loss = criterion(output, label)
                 loss.backward()
                 optimizer.step()
+
                 start_index += 1
                 end_index += 1 
 
@@ -276,15 +299,159 @@ class Agent():
 
         self.transformer.eval()
 
-    def bot_analyze(self):
+    def train_with_latest_data_v2(self): # trains the last 100 minutes
+        training_period = 100
+        new_prices_dict = {}
+        for coin in self.data_log["coins"]:
+            new_prices_dict[coin["coin"]] = []
+            for i in range(-1-20480-training_period, 0):
+                price_change = (coin["prices"][i] - coin["prices"][i-1]) / coin["prices"][i-1]
+                new_prices_dict[coin["coin"]].append(price_change)
 
+            price = new_prices_dict[coin["coin"]][:-1] 
+            new_prices_dict[coin["coin"]] = self.sigmoid(torch.mul(torch.tensor(price), 100)).tolist()
+            
+        self.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.transformer.parameters(), lr=0.001)
+        self.transformer.train()
+
+        start_index = 0
+        end_index = 20480
+        
+        training_inputs = []
+        training_outputs = []
+
+        while (end_index < (20480 + training_period)):
+            
+            training_input = []
+            training_output = []
+            
+            for coin in self.data_log["coins"]:
+                
+                training_input.append(new_prices_dict[coin["coin"]][start_index:end_index]) # appends price changes to training inputs shape = []
+                
+                if (coin["training_data"][end_index] == "B"):
+                    training_output.append([1., 0., 0.])
+                elif (coin["training_data"][end_index] == "S"):
+                    training_output.append([0., 1., 0.])
+                else:
+                    training_output.append([0., 0., 1.])
+            
+            training_inputs.append(training_input)
+            training_outputs.append(training_output)
+            
+            start_index += 1
+            end_index += 1
+
+        prices_data = torch.tensor(training_inputs)
+        labels_data = torch.tensor(training_outputs)
+        
+        dataset = TensorDataset(prices_data, labels_data)
+
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False)
+
+        for epoch in range(3):
+            for inputs, labels in dataloader:
+                inputs = inputs.to(self.device)
+                labels = labels.to(self.device)
+                output = self.transformer(inputs)
+                loss = criterion(output, labels)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()                
+        
+        torch.save(self.transformer.state_dict(), "resources/transformer_model.pth")
+
+        self.transformer.eval()
+
+    def train_with_all_data(self):
+
+        # Step 1: Normalize price data
+        new_prices_dict = {}
+        for coin in self.data_log["coins"]:    # This is just so that the slicing is only done once            
+            new_prices_dict[coin["coin"]] = []
+            for i in range(1, len(coin["prices"])):
+                price_change = (coin["prices"][i] - coin["prices"][i-1]) / coin["prices"][i-1]
+                new_prices_dict[coin["coin"]].append(price_change)
+
+            price = new_prices_dict[coin["coin"]][:-1] 
+            new_prices_dict[coin["coin"]] = self.sigmoid(torch.mul(torch.tensor(price), 100)).tolist()
+
+        # Step 2: Prepare Dataset
+        self.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.transformer.parameters(), lr=0.001)
+        self.transformer.train()
+
+        start_index = 0
+        end_index = 20480
+        
+        next_dataset_list = list(range(20580, 1036798, 100)) # chunks of 100
+        next_dataset_list.append(1036798) 
+        
+        for new_index in next_dataset_list: # This is so that the transformer can be trained on segments of the training data at a time instead of the entire thing (166Gb)
+            
+            training_inputs = []
+            training_outputs = []
+
+            while (end_index < new_index): # 1036798 is the number of prices in the log
+                
+                training_input = []
+                training_output = []
+                
+                for coin in self.data_log["coins"]:
+                    
+                    training_input.append(new_prices_dict[coin["coin"]][start_index:end_index]) # appends price changes to training inputs shape = []
+                    
+                    if (coin["training_data"][end_index] == "B"):
+                        training_output.append([1., 0., 0.])
+                    elif (coin["training_data"][end_index] == "S"):
+                        training_output.append([0., 1., 0.])
+                    else:
+                        training_output.append([0., 0., 1.])
+                
+                training_inputs.append(training_input)
+                training_outputs.append(training_output)
+                
+                start_index += 1
+                end_index += 1
+
+            prices_data = torch.tensor(training_inputs)
+            labels_data = torch.tensor(training_outputs)
+            
+            dataset = TensorDataset(prices_data, labels_data)
+
+            # Step 3: Put Dataset into dataloader
+
+            dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False)
+
+            # Step 4: Train
+
+            for epoch in range(3):
+                for inputs, labels in dataloader:
+                    inputs = inputs.to(self.device)
+                    labels = labels.to(self.device)
+                    output = self.transformer(inputs)
+                    loss = criterion(output, labels)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()                
+        
+        torch.save(self.transformer.state_dict(), "resources/transformer_model.pth")
+
+        self.transformer.eval()
+
+
+    def bot_analyze(self):
+        
         # get prices from data_log and turn them into tensor of right size
         transformer_input = []
         for coin in self.data_log["coins"]:
             transformer_input.append(coin["prices"][-20480:])
         
         input = torch.tensor(transformer_input).unsqueeze(1).to(self.device)
-
+        
         # process through transformer output and create a sorted list by doing the following...
             # Do not include any "Hold" in the list
         
@@ -294,7 +461,7 @@ class Agent():
         output = output.tolist()
         buy_list = []
         sell_list = []
-        for choice, coin in zip(output, self.data_log["coins"]):
+        for choice, coin in zip(output[0], self.data_log["coins"]):
             if ((choice[0] > choice[1]) & (choice[0] > choice[2])): # if Buy is larger
                 buy_list.append([coin["coin"], round((0.05 * round(choice[0] / 0.05)), 2)]) # probability that it should buy in intervals of 0.05
 
@@ -400,139 +567,15 @@ class Agent():
         plt.title("Connected Scatter Plot with Different Colors")
         plt.show()   
 
-    def test1(self):
-        """
-        train using 80% of the data
-        """
-        new_prices_dict = {}
-        for coin in self.data_log["coins"]:
-            new_prices_dict[coin["coin"]] = []
-            for i in range(1, int(0.8 * len(coin["prices"]))): # loops over 80% of prices
-                price_change = (coin["prices"][i] - coin["prices"][i-1]) / coin["prices"][i-1]
-                new_prices_dict[coin["coin"]].append(price_change)
-
-            price = new_prices_dict[coin["coin"]][:-1] 
-            new_prices_dict[coin["coin"]] = self.sigmoid(torch.mul(torch.tensor(price), 100)).tolist()
-         
-        self.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(self.transformer.parameters(), lr=0.001)
-        self.transformer.train()
-
-        num_epochs = 3
-        for epoch in range(num_epochs):
-
-            start_index = 0
-            end_index = 20480
-
-            while (end_index <= 829438):
-                print(end_index)
-                training_inputs = []
-                training_outputs = []
-
-                for coin in self.data_log["coins"]:
-                    
-                    training_inputs.append(new_prices_dict[coin["coin"]][start_index:end_index])
-
-                    if (coin["training_data"][end_index] == "B"):
-                        training_outputs.append([1., 0., 0.])
-                    elif (coin["training_data"][end_index] == "S"):
-                        training_outputs.append([0., 1., 0.])
-                    else:
-                        training_outputs.append([0., 0., 1.])
-
-                input = torch.tensor(training_inputs).unsqueeze(1).to(self.device)
-                label = torch.tensor(training_outputs).to(self.device)
-                output = self.transformer(input)
-                loss = criterion(output, label)
-                loss.backward()
-                optimizer.step()
-                start_index += 1
-                end_index += 1 
-
-        torch.save(self.transformer.state_dict(), "transformer_model.pth")
-
-        """
-        pretend to buy and sell and measure profits
-        """
-        minute_counter = 0
-        start_index = 808958
-        end_index = 829438
-        available_usd = 100
-        available_usd_history = []
-        currently_owning = {coin: 0 for coin in self.data_log["coins"]} # updated every time a coin is bought
-
-        while (end_index <= 1036798):
-
-            # buy or sell
-            transformer_input = []
-            for coin in self.data_log["coins"]:
-                transformer_input.append(coin["prices"][start_index:end_index])
-
-            input = torch.tensor(transformer_input).unsqueeze(1).to(self.device)
-
-            with torch.no_grad():
-                output = self.transformer(input)
-
-            output = output.tolist()
-            buy_list = []
-            sell_list = []
-            for choice, coin in zip(output, self.data_log["coins"]):
-                if ((choice[0] > choice[1]) & (choice[0] > choice[2])): # if Buy is larger
-                    buy_list.append([coin["coin"], round((0.05 * round(choice[0] / 0.05)), 2)]) # probability that it should buy in intervals of 0.05
-                elif ((choice[1] > choice[0]) & (choice[1] > choice[2])): # if Sell is larger
-                    sell_list.append([coin["coin"], round((0.05 * round(choice[1] / 0.05)), 2)]) # probability that it should sell in intervals of 0.05
-                else: # if hold is larger
-                    pass
-            
-            # Buy list [["BTC", 0.5],["ETH", 0.25],["SOL", 0.05]]
-            
-
-            """
-            Algorithm to determine how much quantity of a coin to sell
-            """
-            for order in sell_list:          
-                currently_owning[order[0]] = currently_owning[order[0]] * (1 - order[1])
-                available_usd = available_usd + (currently_owning * order[1]) * self.data_log["coins"][order[0]][end_index]
-
-            """
-            Algorithm to determine how much quantity of a coin to buy
-            """
-            total = 0
-            for order in buy_list:
-                total += order[1]
-
-            for order in buy_list:
-                amount_to_spend = ((order[1] / total) * available_usd)
-                currently_owning[order[0]] = currently_owning[order[0]] + amount_to_spend / self.data_log["coins"][order[0]][end_index]
-                available_usd = available_usd - amount_to_spend
-
-            available_usd_history.append(available_usd)
-
-            """
-            if minute_counter == 30:                
-                # train
-                print()
-                minute_counter = 0
-            """
-
-            start_index += 1
-            end_index += 1
-            minute_counter += 1
-        
-        plt.plot(available_usd_history)
-        plt.show()
-
-        # train model with new data every 30 minutes
-        # go until the end
-
-#agent = Agent(crypto_dotcom_key, crypto_dotcom_secret, 2)
+#agent = Agent(crypto_dotcom_key, crypto_dotcom_secret)
 #torch.save(agent.transformer.state_dict(), "resources/transformer_model.pth")
+#torch.save(agent.transformer.state_dict(), "googlecolab/transformer_model_colab.pth")
 #agent.get_latest_prices()
 #agent.calculate_training_data()
 #agent.train_with_latest_data()
-#agent.train_with_latest_data()    
-
+#agent.train_with_all_data() # Size of tensor going into transformer when training: [1, 2, 20480]
+#agent.bot_analyze() # Size of tensor going into transformer when analyzing:  
+#agent.train_with_latest_data_v2()
 """
 sleep(60 - datetime.now().second) # to ensure that functions happen exactly on the minute
 
@@ -546,12 +589,6 @@ while True:
     sleep(1)
 """
 
-# TODO  Use pytorch's DataLoader for faster training.
-#       Modify the dimentions of the tensors for training so that I can batch things together
-
-
-# NOTE: There is a total of 1,016,318 training inputs
-for i in range(1, 1016318):
-    if ((1016318 % i) == 0):
-        print(i)
-
+# TODO
+#       Modify transformer so that it doesnt need that useless extra dimention. (Example: tensor of shape [2, 1, 20480] should just be [2, 20480])
+#       Modify transformer so that it can use batches for training
