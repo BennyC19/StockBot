@@ -255,7 +255,3 @@ class API():
                 self.error_handler()
             except requests.exceptions.RequestException as e:
                 self.error_handler()
-
-
-api = API("U4ue4Wvfo8E7ckdC1XoHu9", "C66tu72RRATpKTb8z7Gs4n")
-api.get_candlestick("BTC", -1, -1, -1)
