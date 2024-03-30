@@ -588,7 +588,3 @@ while True:
     schedule.run_pending()
     sleep(1)
 """
-
-# TODO
-#       Modify transformer so that it doesnt need that useless extra dimention. (Example: tensor of shape [2, 1, 20480] should just be [2, 20480])
-#       Modify transformer so that it can use batches for training
