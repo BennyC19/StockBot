@@ -36,7 +36,6 @@ class Agent():
         self.device = 'cuda'
 
         if not torch.cuda.is_available(): 
-            self.device = 'cpu'
             print("no gpu available")
             exit()
 

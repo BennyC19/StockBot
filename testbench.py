@@ -1,6 +1,6 @@
-
 import time
 import json
+import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,7 +10,7 @@ from main import Agent
 from resources.api_keys import crypto_dotcom_key, crypto_dotcom_secret
 
 agent = Agent(crypto_dotcom_key, crypto_dotcom_secret)
-print(agent.batch_size)
+
 def setup_historical_prices_test_data():
 
     training_data_log = json.load(open("resources/training_data_log.json"))
@@ -111,7 +111,7 @@ def verify_training_data():
     plt.title("Connected Scatter Plot with Different Colors")
     plt.show()  
 
-def test1_train_model_last_hundred(end_index): # This function is correct for the final product but for testing purposes it must be modified
+def test1_train_model_last_hundred(end_index):
 
     training_data_log = json.load(open("resources/training_data_log.json"))
     training_period = 100
@@ -306,21 +306,29 @@ def test2_analyze_success_rate_no_retraining():
     x_values = range(len(training_data_log["coins"][0]["prices"][1036798:]))
     y_values = training_data_log["coins"][0]["prices"][1036798:]
 
+    """
     plt.scatter(x_values, y_values, color=buy_sell_history)
     plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
     plt.xlabel("time")
     plt.ylabel("price")
     plt.title("Price with buy and sell choices")
     plt.show()
+    """
 
     x_values = range(len(gain_history))
     y_values = gain_history
 
+    with open("test_results/gain_history_test2.pkl", "wb") as file:
+        pickle.dump(y_values, file)
+
+    """
     plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
     plt.xlabel("time")
     plt.ylabel("Gain")
     plt.title("Gain over time")
     plt.show() 
+    """
+
 
 """
 Test 3:
@@ -385,18 +393,25 @@ def test3_analyze_success_rate_regular_retraining():
     x_values = range(len(training_data_log["coins"][0]["prices"][1036798:]))
     y_values = training_data_log["coins"][0]["prices"][1036798:]
 
+    """
     plt.scatter(x_values, y_values, color=buy_sell_history)
     plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
     plt.xlabel("time")
     plt.ylabel("price")
     plt.title("Price with buy and sell choices")
     plt.show()
+    """
 
     x_values = range(len(gain_history))
     y_values = gain_history
 
+    with open("test_results/gain_history_test3.pkl", "wb") as file:
+        pickle.dump(y_values, file)
+    
+    """
     plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
     plt.xlabel("time")
     plt.ylabel("Gain")
     plt.title("Gain over time")
     plt.show() 
+    """
