@@ -347,7 +347,7 @@ def test3_analyze_success_rate_regular_retraining():
     counter = 0
     while (end_index < len(training_data_log["coins"][0]["prices"])):
 
-        if (counter == 0):
+        if (counter == 100):
             test1_train_model_last_hundred(end_index)
             counter = 0
 
