@@ -1,7 +1,6 @@
 import time
 import datetime
 import json
-import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -53,7 +52,7 @@ class Testbench():
         
         end_time = time.time()
         
-        estimated_training_time = int(((start_time - end_time) / 3600) * 10163)
+        estimated_training_time = int(((end_time - start_time) / 3600) * 10163)
 
         return estimated_training_time
 
@@ -469,8 +468,7 @@ class Testbench():
         x_values = range(len(gain_history))
         y_values = gain_history
 
-        with open("test_results/gain_history_test3.pkl", "wb") as file:
-            pickle.dump(y_values, file)
+        return y_values
         
         """
         plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
