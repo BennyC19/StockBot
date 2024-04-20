@@ -1,0 +1,14 @@
+Options for trading platform
+1. Questrade (Orders may not be possible)
+2. Coinbase (maker/taker == 0.60%/0.80%) (Only crypto)
+3. Interactive Brokers (maker/taker == )
+
+
+TODO:
+1. Do more research on Questrade
+2. Figure out an algorithm for training the model
+3. Get Questrade Account
+
+IMPORTANT
+Perhaps several different kinds of tokens can be made. Tokens made with data from weekly intervals, daily intervals, hourly intervals, 15 min intervals.
+This is so that the transformer can get a feel for the bigger picture of the weekly intervals as well as the small details within the 15 minute intervals. 
