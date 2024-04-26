@@ -5,9 +5,9 @@ import time
 from time import sleep
 from datetime import datetime
 import numpy as np
-import pandas as pd
-import dask.dataframe as dd
-import matplotlib.pyplot as plt
+#import pandas as pd
+#import dask.dataframe as dd
+#import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -57,14 +57,14 @@ class Agent():
         torch.cuda.empty_cache() 
     
         self.sigmoid = nn.Sigmoid()
-        self.data_log = json.load(open("resources\data_log.json"))
+        self.data_log = json.load(open("resources/data_log.json"))
 
         self.coin_num = len(self.data_log['coins'])
         
         self.batch_size = int(int(15 / (peak_memory / 1024**3)) / self.coin_num)
 
     def update_data_log_file(self):
-        with open("resources\data_log.json", "w") as file:
+        with open("resources/data_log.json", "w") as file:
             json.dump(self.data_log, file, separators=(',', ':'))
     
     def startup(self):
