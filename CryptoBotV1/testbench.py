@@ -1,11 +1,12 @@
 import time
 import datetime
 import json
+import gc
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from main import Agent
 from resources.api_keys import crypto_dotcom_key, crypto_dotcom_secret
 
@@ -14,12 +15,18 @@ class Testbench():
         self.agent = Agent(crypto_dotcom_key, crypto_dotcom_secret)
         self.training_data_log = json.load(open("resources/training_data_log.json"))
         self.test_results = json.load(open("test_results/test_results.json"))
-    
+
     def update_test_results_file(self):
         with open("test_results/test_results.json", "w") as file:
             json.dump(self.test_results, file, separators=(',', ':'))
     
-    
+    def manual_data_analysis(self):
+        plt.plot(self.test_results["sequence_1"]["success_rate_no_retraining"]) 
+        plt.title("Sample Line Plot")
+        plt.xlabel("X-axis Label")
+        plt.ylabel("Y-axis Label") 
+        plt.show()
+
     """
     Test 1: Test to predict time it will take to train model
     Returns: integer for hours
@@ -171,7 +178,7 @@ class Testbench():
     Test 5: This test is only used with test 7. This test trains over a period of 100 minutes.
 
     """
-    def test5_train_model_last_hundred(self, end_index):
+    def test5_train_model_last_hundred(self, end_index, model_number):
 
         training_period = 100
         new_prices_dict = {}
@@ -184,7 +191,7 @@ class Testbench():
             price = new_prices_dict[coin["coin"]][:-1] 
             new_prices_dict[coin["coin"]] = self.agent.sigmoid(torch.mul(torch.tensor(price), 100)).tolist()
             
-        self.agent.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
+        self.agent.transformer.load_state_dict(torch.load(f"resources/transformer_model_{model_number}.pth"))
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(self.agent.transformer.parameters(), lr=0.001)
         self.agent.transformer.train()
@@ -241,7 +248,7 @@ class Testbench():
     Test 6: Will train the model with two years worth of data
 
     """
-    def test6_train_model(self):
+    def test6_train_model(self, model_number):
 
         # Step 1: Normalize price data
         new_prices_dict = {}
@@ -255,7 +262,7 @@ class Testbench():
             new_prices_dict[coin["coin"]] = self.agent.sigmoid(torch.mul(torch.tensor(price), 100)).tolist()
 
         # Step 2: Prepare Dataset
-        self.agent.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
+        #self.agent.transformer.load_state_dict(torch.load(f"resources/transformer_model_{model_number}.pth"))
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(self.agent.transformer.parameters(), lr=0.001)
         self.agent.transformer.train()
@@ -309,7 +316,7 @@ class Testbench():
                     loss.backward()
                     optimizer.step()
 
-        torch.save(self.agent.transformer.state_dict(), "resources/transformer_model.pth")
+        torch.save(self.agent.transformer.state_dict(), f"resources/transformer_model_{model_number}.pth")
 
         self.agent.transformer.eval()
 
@@ -319,79 +326,34 @@ class Testbench():
     - Plot a graph of when the bot decided to buy and sell
     - This test will not calculate the potential gains
     """
-    def test7_analyze_success_rate_no_retraining(self):
+    def test7_analyze_success_rate_no_retraining(self, model_number):
 
-        self.agent.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
-        buy_sell_history = []
+        self.agent.transformer.load_state_dict(torch.load(f"resources/transformer_model_{model_number}.pth"))
         transformer_input = []
+        transformer_output = []
         start_index = 1016318
         end_index = 1036798
         
         while (end_index < len(self.training_data_log["coins"][0]["prices"])):
+
             for coin in self.training_data_log["coins"]:
                 transformer_input.append(coin["prices"][start_index:end_index])
 
             input = torch.tensor(transformer_input).unsqueeze(1).to(self.agent.device)
-      
+
             with torch.no_grad():
                 output = self.agent.transformer(input)
-        
-            output = output.tolist() # takes the tensor and turns it back into a list
-            
-            for choice, coin in zip(output[0], self.training_data_log["coins"]):
-                if ((choice[0] > choice[1]) & (choice[0] > choice[2])): # if Buy is larger
-                    buy_sell_history.append("red")
 
-                elif ((choice[1] > choice[0]) & (choice[1] > choice[2])): # if Sell is larger
-                    buy_sell_history.append("green")
-                
-                else: # if hold is larger
-                    buy_sell_history.append("grey")
+            output = output.tolist()
+            
+            transformer_output.append(output[0])
 	    
             transformer_input = []            
             start_index += 1
             end_index += 1
         
-        buy_list = []
-        gain_history = []
-        total_gain = 0
-        for price, marker in zip(self.training_data_log["coins"][0]["prices"][1036798:], buy_sell_history):
-            if (marker == "red"):
-                buy_list.append(price)
-            elif (marker == "green"):
-                if (len(buy_list) != 0):
-                    for price_bought in buy_list:
-                        total_gain += ((price / price_bought - 1) * 100) - 0.15
-                    buy_list = []
-
-            gain_history.append(total_gain)
-
-        #print(len(buy_sell_history)) <-- 86402
-        x_values = range(len(self.training_data_log["coins"][0]["prices"][1036798:]))
-        y_values = self.training_data_log["coins"][0]["prices"][1036798:]
-
-        """
-        plt.scatter(x_values, y_values, color=buy_sell_history)
-        plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
-        plt.xlabel("time")
-        plt.ylabel("price")
-        plt.title("Price with buy and sell choices")
-        plt.show()
-        """
-
-        x_values = range(len(gain_history))
-        y_values = gain_history
-
-        return y_values
-
-        """
-        plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
-        plt.xlabel("time")
-        plt.ylabel("Gain")
-        plt.title("Gain over time")
-        plt.show() 
-        """
-
+        return transformer_output
+        
 
     """
     Test 8:
@@ -399,12 +361,11 @@ class Testbench():
     - Plot the success rate of the bot over time
     - Plot potential gains of the bot over the 2 month period
     """
-    def test8_analyze_success_rate_regular_retraining(self):
+    def test8_analyze_success_rate_regular_retraining(self, model_number):
 
-        self.agent.transformer.load_state_dict(torch.load("resources/transformer_model.pth"))
-        
-        buy_sell_history = []
+        self.agent.transformer.load_state_dict(torch.load(f"resources/transformer_model_{model_number}.pth"))
         transformer_input = []
+        transformer_output = []
         start_index = 1016318
         end_index = 1036798
         
@@ -412,7 +373,7 @@ class Testbench():
         while (end_index < len(self.training_data_log["coins"][0]["prices"])):
 
             if (counter == 100):
-                self.test5_train_model_last_hundred(end_index)
+                self.test5_train_model_last_hundred(end_index, model_number)
                 counter = 0
 
             for coin in self.training_data_log["coins"]:
@@ -425,95 +386,52 @@ class Testbench():
         
             output = output.tolist() # takes the tensor and turns it back into a list
             
-            for choice, coin in zip(output[0], self.training_data_log["coins"]):
-                if ((choice[0] > choice[1]) & (choice[0] > choice[2])): # if Buy is larger
-                    buy_sell_history.append("red")
-
-                elif ((choice[1] > choice[0]) & (choice[1] > choice[2])): # if Sell is larger
-                    buy_sell_history.append("green")
-                
-                else: # if hold is larger
-                    buy_sell_history.append("grey")
+            transformer_output.append(output[0])
 
             transformer_input = []
             counter += 1
             start_index += 1
             end_index += 1
         
-        buy_list = []
-        gain_history = []
-        total_gain = 0
-        for price, marker in zip(self.training_data_log["coins"][0]["prices"][1036798:], buy_sell_history):
-            if (marker == "red"):
-                buy_list.append(price)
-            elif (marker == "green"):
-                if (len(buy_list) != 0):
-                    for price_bought in buy_list:
-                        total_gain += ((price / price_bought - 1) * 100) - 0.15
-                    buy_list = []
-
-            gain_history.append(total_gain)
-
-        #print(len(buy_sell_history)) <-- 86402
-        x_values = range(len(self.training_data_log["coins"][0]["prices"][1036798:]))
-        y_values = self.training_data_log["coins"][0]["prices"][1036798:]
-
-        """
-        plt.scatter(x_values, y_values, color=buy_sell_history)
-        plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
-        plt.xlabel("time")
-        plt.ylabel("price")
-        plt.title("Price with buy and sell choices")
-        plt.show()
-        """
-
-        x_values = range(len(gain_history))
-        y_values = gain_history
-
-        return y_values
-        
-        """
-        plt.plot(x_values, y_values, color="black", linestyle="-", linewidth=1)  # Connect points with a black line
-        plt.xlabel("time")
-        plt.ylabel("Gain")
-        plt.title("Gain over time")
-        plt.show() 
-        """
+        return transformer_output
 
 
 """
 Sequence 1
 
 """
-torch.cuda.empty_cache()
-testbench = Testbench() 
-#print(f"Predicted training duration for one sequence = {testbench.test1_predict_testing_duration()} hours")
-#print("//////////////////////////////////////////////////////////////////////////////////")
-#print("Sequence 1 START")
-#print(f"[{datetime.datetime.now()}]  started setup_training_test_data (step 1 of 12)")
-#testbench.test3_setup_training_test_data(0.005)
-#print(f"[{datetime.datetime.now()}]  finished setup_training_test_data")
-#print(f"[{datetime.datetime.now()}]  started train_model (step 2 of 12)")
-#testbench.test6_train_model()
-#print(f"[{datetime.datetime.now()}]  finished train_model")
-#print(f"[{datetime.datetime.now()}]  started analyze_success_rate_no_retraining (step 3 of 12)")
-#result = testbench.test7_analyze_success_rate_no_retraining()
-#testbench.test_results["sequence_1"]["success_rate_no_retraining"] = result
-#testbench.update_test_results_file()
+testbench = Testbench()
+print(f"Device vram = {testbench.agent.vram_b} bytes")
+print(f"Estimated memory allocated when batch size and samples are one = {testbench.agent.peak_memory} bytes")
+print(f"batch size = {testbench.agent.batch_size}")
+print(f"Predicted training duration for one sequence = {testbench.test1_predict_testing_duration()} hours")
+print("//////////////////////////////////////////////////////////////////////////////////")
+print("Sequence 1 START")
+print(f"[{datetime.datetime.now()}]  started setup_training_test_data (step 1 of 12)")
+testbench.test3_setup_training_test_data(0.005)
+print(f"[{datetime.datetime.now()}]  finished setup_training_test_data")
+print(f"[{datetime.datetime.now()}]  started train_model (step 2 of 12)")
+testbench.test6_train_model(1)
+print(f"[{datetime.datetime.now()}]  finished train_model")
+print(f"[{datetime.datetime.now()}]  started analyze_success_rate_no_retraining (step 3 of 12)")
+result = testbench.test7_analyze_success_rate_no_retraining(1)
+testbench.test_results["sequence_1"]["transformer_output_no_retraining"] = result
+testbench.update_test_results_file()
 print(f"[{datetime.datetime.now()}]  finished analyze_success_rate_no_retraining")
 print(f"[{datetime.datetime.now()}]  started analyze_success_rate_regular_retraining (step 4 of 12)")
-
-result = testbench.test8_analyze_success_rate_regular_retraining()
-testbench.test_results["sequence_1"]["success_rate_regular_retraining"] = result
+result = testbench.test8_analyze_success_rate_regular_retraining(1)
+testbench.test_results["sequence_1"]["transformer_output_regular_retraining"] = result
 testbench.update_test_results_file()
+torch.cuda.empty_cache()
+gc.collect()
 print(f"[{datetime.datetime.now()}]  finished analyze_success_rate_regular_retraining")
 print("Sequence 1 END")
+
 
 """
 Sequence 2
 
 """
-'''
 testbench = Testbench() 
 print("//////////////////////////////////////////////////////////////////////////////////")
 print("Sequence 2 START")
@@ -521,17 +439,19 @@ print(f"[{datetime.datetime.now()}]  started setup_training_test_data (step 5 of
 testbench.test3_setup_training_test_data(0.01)
 print(f"[{datetime.datetime.now()}]  finished setup_training_test_data")
 print(f"[{datetime.datetime.now()}]  started train_model (step 5 of 12)")
-testbench.test6_train_model()
+testbench.test6_train_model(2)
 print(f"[{datetime.datetime.now()}]  finished train_model")
 print(f"[{datetime.datetime.now()}]  started analyze_success_rate_no_retraining (step 7 of 12)")
-result = testbench.test7_analyze_success_rate_no_retraining()
+result = testbench.test7_analyze_success_rate_no_retraining(2)
 testbench.test_results["sequence_2"]["success_rate_no_retraining"] = result
 testbench.update_test_results_file()
 print(f"[{datetime.datetime.now()}]  finished analyze_success_rate_no_retraining")
 print(f"[{datetime.datetime.now()}]  started analyze_success_rate_regular_retraining (step 8 of 12)")
-result = testbench.test8_analyze_success_rate_regular_retraining()
+result = testbench.test8_analyze_success_rate_regular_retraining(2)
 testbench.test_results["sequence_2"]["success_rate_regular_retraining"] = result
 testbench.update_test_results_file()
+torch.cuda.empty_cache()
+gc.collect()
 print(f"[{datetime.datetime.now()}]  finished analyze_success_rate_regular_retraining")
 print("Sequence 2 END")
 
@@ -546,18 +466,18 @@ print(f"[{datetime.datetime.now()}]  started setup_training_test_data (step 9 of
 testbench.test3_setup_training_test_data(0.02)
 print(f"[{datetime.datetime.now()}]  finished setup_training_test_data")
 print(f"[{datetime.datetime.now()}]  started train_model (step 10 of 12)")
-testbench.test6_train_model()
+testbench.test6_train_model(3)
 print(f"[{datetime.datetime.now()}]  finished train_model")
 print(f"[{datetime.datetime.now()}]  started analyze_success_rate_no_retraining (step 11 of 12)")
-result = testbench.test7_analyze_success_rate_no_retraining()
+result = testbench.test7_analyze_success_rate_no_retraining(3)
 testbench.test_results["sequence_3"]["success_rate_no_retraining"] = result
 testbench.update_test_results_file()
 print(f"[{datetime.datetime.now()}]  finished analyze_success_rate_no_retraining")
 print(f"[{datetime.datetime.now()}]  started analyze_success_rate_regular_retraining (step 12 of 12)")
-result = testbench.test8_analyze_success_rate_regular_retraining()
+result = testbench.test8_analyze_success_rate_regular_retraining(3)
 testbench.test_results["sequence_3"]["success_rate_regular_retraining"] = result
 testbench.update_test_results_file()
+torch.cuda.empty_cache()
+gc.collect()
 print(f"[{datetime.datetime.now()}]  finished analyze_success_rate_regular_retraining")
 print("Sequence 3 END")
-
-'''

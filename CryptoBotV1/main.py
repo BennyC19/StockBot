@@ -1,5 +1,6 @@
 import os
 import schedule
+import gc
 import json
 import time
 from time import sleep
@@ -40,7 +41,10 @@ class Agent():
             exit()
 
         torch.cuda.empty_cache()
+        gc.collect()
+        
         self.transformer = Transformer().to(self.device)
+
         random_input_tensor = torch.rand(1, 1, 20480)
         random_output_tensor = torch.rand(1, 1, 3)
         criterion = nn.CrossEntropyLoss()
@@ -52,17 +56,29 @@ class Agent():
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        peak_memory = torch.cuda.max_memory_allocated(self.device)
+
+        torch.cuda.empty_cache()
+        gc.collect()
+        self.peak_memory = torch.cuda.max_memory_allocated(self.device)
         torch.cuda.reset_peak_memory_stats(self.device)
-        torch.cuda.empty_cache() 
-    
+        
         self.sigmoid = nn.Sigmoid()
+
         self.data_log = json.load(open("resources/data_log.json"))
 
         self.coin_num = len(self.data_log['coins'])
-        
-        self.batch_size = int(int(15 / (peak_memory / 1024**3)) / self.coin_num)
 
+        self.current_device = torch.cuda.current_device()
+
+        self.vram_b = torch.cuda.get_device_properties(self.current_device).total_memory
+
+        safety_margin = 0.9
+
+        estimated_batch_size = int((self.vram_b * safety_margin / self.peak_memory) / self.coin_num)
+        
+        self.batch_size = min([1, 2, 4, 5, 10, 20, 25, 50, 100], key=lambda x: abs(x - estimated_batch_size))
+
+    
     def update_data_log_file(self):
         with open("resources/data_log.json", "w") as file:
             json.dump(self.data_log, file, separators=(',', ':'))
